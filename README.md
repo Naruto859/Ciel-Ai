@@ -67,7 +67,7 @@ No backend. No database. No sign-up required. Just open and chat.
 ### Option 1: Just open the file (No install needed)
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/ciel-ai.git
+git clone https://github.com/Naruto859/Ciel-Ai.git
 cd ciel-ai
 
 # Open in browser
@@ -113,7 +113,7 @@ ciel-ai/
 
 Ciel AI works **completely free** without any API key:
 
-| Feature | No Key | With Pollinations `pk_` Key |
+| Feature | No Key | With Pollinations `Sk_` Key |
 |---|---|---|
 | Text generation | ✅ Free | ✅ Free |
 | Image generation | ✅ Free | ✅ Free |
@@ -121,7 +121,7 @@ Ciel AI works **completely free** without any API key:
 | TTS (Pollinations audio) | ❌ | ✅ 30+ voices |
 | SearchGPT model | ✅ Free | ✅ Free |
 
-Get your free `pk_` key at **[enter.pollinations.ai](https://enter.pollinations.ai)**  
+Get your free `sk_` key at **[enter.pollinations.ai](https://enter.pollinations.ai)**  
 Then add it in **Settings → API Key**.
 
 ---
