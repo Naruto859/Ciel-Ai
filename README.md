@@ -68,7 +68,7 @@ No backend. No database. No sign-up required. Just open and chat.
 ```bash
 # Clone the repo
 git clone https://github.com/Naruto859/Ciel-Ai.git
-cd ciel-ai
+cd Ciel-Ai
 
 # Open in browser
 start index.html   # Windows
