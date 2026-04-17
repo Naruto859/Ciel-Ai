@@ -4,7 +4,7 @@
 
 ![Ciel AI Banner](https://image.pollinations.ai/prompt/futuristic%20AI%20chat%20interface%20glowing%20cyan%20purple%20minimalist%20dark%20background%20logo?width=1200&height=400&model=flux&nologo=true)
 
-**A hyper-intelligent, mobile-first AI chat app powered entirely by [Pollinations.ai](https://pollinations.ai) free APIs.**  
+**A hyper-intelligent, AI chat app powered entirely by [Pollinations.ai](https://pollinations.ai) free APIs.**  
 No backend. No database. No sign-up required. Just open and chat.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Open%20App-7c5cfc?style=for-the-badge)](https://your-deployment-url.vercel.app)
