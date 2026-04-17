@@ -171,7 +171,7 @@ svg{stroke:currentColor;fill:none;flex-shrink:0}
 .rename-modal { max-width: 380px; }
 
 
-.app-header{height:72px;margin:14px 14px 0;background:var(--glass);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:var(--rxl);display:flex;align-items:center;padding:0 16px;gap:10px;box-shadow:var(--s3d);border:1px solid rgba(255,255,255,0.4);position:relative;flex-shrink:0}
+.app-header{z-index: 100;height:72px;margin:14px 14px 0;background:var(--glass);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:var(--rxl);display:flex;align-items:center;padding:0 16px;gap:10px;box-shadow:var(--s3d);border:1px solid rgba(255,255,255,0.4);position:relative;flex-shrink:0}
 .header-center{flex:1;display:flex;align-items:center;gap:10px;min-width:0}
 .header-title{font-weight:800;font-size:1.1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)}
 .header-orb{width:32px;height:32px;border-radius:50%;background:radial-gradient(circle at 35% 35%,var(--accent),#059669);box-shadow:0 0 18px var(--glow),inset -3px -3px 6px rgba(0,0,0,0.2),inset 4px 4px 8px rgba(255,255,255,0.5);animation:floatOrb 5s ease-in-out infinite;flex-shrink:0}
