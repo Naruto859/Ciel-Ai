@@ -393,17 +393,22 @@ function renderChatHistory() {
     el.className = 'history-item' + (chat.id === activeChatObj?.id ? ' active' : '');
     el.innerHTML = `<span class="history-item-title">${chat.title}</span><button class="history-item-del" data-id="${chat.id}">✕</button>`;
     el.addEventListener('click', e => {
-      if (e.target.classList.contains('history-item-del')) {
-        e.stopPropagation();
-        if (confirm('Delete this chat?')) {
-          C.deleteChat(chat.id);
-          if (chat.id === activeChatObj?.id) startNewChat(); else renderChatHistory();
-        }
-        return;
+  if (e.target.classList.contains('history-item-del')) {
+    e.stopPropagation();
+    if (confirm('Delete this chat?')) {
+      C.deleteChat(chat.id);
+      if (chat.id === activeChatObj?.id) {
+        startNewChat();
+        renderChatHistory();
+      } else {
+        renderChatHistory();
       }
-      loadChat(chat.id);
-      closeSidebar();
-    });
+    }
+    return;
+  }
+  loadChat(chat.id);
+  closeSidebar();
+});
     chatHistoryList.appendChild(el);
   });
 }
