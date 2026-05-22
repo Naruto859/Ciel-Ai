@@ -67,14 +67,17 @@ window.cielToast = toast; // expose for app.js TTS errors
 // ── Theme ──────────────────────────────
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
-  const dark = theme === 'dark';
-  themeLabel.textContent = dark ? 'Switch to Light Mode' : 'Switch to Dark Mode';
-  $('hljs-theme').href = dark
-    ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'
-    : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+  const isLight = theme === 'light';
+  $('hljs-theme').href = isLight
+    ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css'
+    : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css';
+  
+  const checkbox = $('themeToggleCheckbox');
+  if (checkbox) checkbox.checked = isLight; 
 }
-$('settingsThemeToggle').addEventListener('click', () => {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+
+$('themeToggleCheckbox')?.addEventListener('change', (e) => {
+  const next = e.target.checked ? 'light' : 'dark';
   applyTheme(next);
   localStorage.setItem('cielai_theme', next);
 });
@@ -103,16 +106,52 @@ $('sidebarClose').addEventListener('click', closeSidebar);
 sidebarOverlay.addEventListener('click', closeSidebar);
 
 // ── Settings ───────────────────────────
-function openSettings() { loadSettingsUI(); settingsOverlay.classList.add('show'); }
+let initialSettingsJSON = '';
+
+function openSettings() { 
+  loadSettingsUI(); 
+  initialSettingsJSON = JSON.stringify(C.state.settings);
+  settingsOverlay.classList.add('show'); 
+}
+
+function handleSettingsClose() {
+  const currentSettings = {
+    ...C.state.settings,
+    ttsVoice: $('ttsVoiceSelect').value,
+    sttLang: $('sttLangSelect').value,
+    apiKey: $('apiKeyInput').value.trim(),
+    tavilyKey: $('tavilyKeyInput').value.trim(),
+  };
+  
+  // Exclude models from comparison if they are saved immediately, but wait: 
+  // The 'Save Settings' button actually saves everything. If user clicks a model chip, it updates C.state.settings immediately.
+  // So currentSettings.textModel will match C.state.settings.textModel.
+  // The actual check should be against the state BEFORE opening settings.
+  
+  if (JSON.stringify(currentSettings) !== initialSettingsJSON) {
+    if (confirm('You have unsaved changes. Do you want to save them before closing?')) {
+      $('saveSettingsBtn').click();
+      return;
+    } else {
+      // Revert settings
+      C.state.settings = JSON.parse(initialSettingsJSON);
+      C.saveState();
+      updateHeaderUI();
+    }
+  }
+  closeSettings();
+}
+
 function closeSettings() { settingsOverlay.classList.remove('show'); }
 $('settingsBtn').addEventListener('click', () => { closeSidebar(); openSettings(); });
-$('settingsClose').addEventListener('click', closeSettings);
-settingsOverlay.addEventListener('click', e => { if (e.target === settingsOverlay) closeSettings(); });
+$('settingsClose').addEventListener('click', handleSettingsClose);
+settingsOverlay.addEventListener('click', e => { if (e.target === settingsOverlay) handleSettingsClose(); });
 
 function loadSettingsUI() {
   const s = C.state.settings;
-  document.querySelectorAll('#textModelChips .model-chip').forEach(b => b.classList.toggle('active', b.dataset.model === s.textModel));
-  document.querySelectorAll('#imageModelChips .model-chip').forEach(b => b.classList.toggle('active', b.dataset.model === s.imageModel));
+  // Re-render to apply correct key permissions colors
+  renderDynamicModels();
+  
   document.querySelectorAll('#ttsModeChips .model-chip').forEach(b => b.classList.toggle('active', b.dataset.mode === s.ttsMode));
   const isPolly = s.ttsMode === 'pollinations';
   voiceGroup.style.display = isPolly ? 'block' : 'none';
@@ -122,6 +161,7 @@ function loadSettingsUI() {
   $('tavilyKeyInput').value  = s.tavilyKey || '';
   updateTtsWarning();
 }
+
 function updateTtsWarning() {
   const isPolly = document.querySelector('#ttsModeChips .model-chip.active')?.dataset.mode === 'pollinations';
   const hasKey  = $('apiKeyInput').value.trim().length > 4;
@@ -137,21 +177,24 @@ function updateTtsWarning() {
   warn.style.display = (isPolly && !hasKey) ? 'block' : 'none';
   warn.textContent = 'API key required for Pollinations voice. Enter key below.';
 }
-document.querySelectorAll('#textModelChips .model-chip').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('#textModelChips .model-chip').forEach(x => x.classList.remove('active'));
-  b.classList.add('active');
-}));
-document.querySelectorAll('#imageModelChips .model-chip').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('#imageModelChips .model-chip').forEach(x => x.classList.remove('active'));
-  b.classList.add('active');
-}));
+
 document.querySelectorAll('#ttsModeChips .model-chip').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('#ttsModeChips .model-chip').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   voiceGroup.style.display = b.dataset.mode === 'pollinations' ? 'block' : 'none';
   updateTtsWarning();
 }));
-$('apiKeyInput').addEventListener('input', updateTtsWarning);
+$('apiKeyInput').addEventListener('input', () => {
+  updateTtsWarning();
+  const display = $('balanceDisplay');
+  if (display) {
+    display.textContent = '';
+    display.style.display = 'none';
+  }
+  // Update state immediately for live UI feedback
+  C.state.settings.apiKey = $('apiKeyInput').value.trim();
+  renderDynamicModels();
+});
 $('toggleApiKey').addEventListener('click', () => {
   const inp = $('apiKeyInput');
   const show = inp.type === 'password';
@@ -160,6 +203,48 @@ $('toggleApiKey').addEventListener('click', () => {
     ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`
     : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 });
+$('checkBalanceBtn')?.addEventListener('click', async () => {
+  const apiKey = $('apiKeyInput').value.trim();
+  const display = $('balanceDisplay');
+  if (!apiKey) { toast('Enter an API key first to check balance', 'error'); return; }
+  
+  display.style.display = 'block';
+  display.style.color = 'var(--dim)';
+  display.textContent = 'Checking balance...';
+  
+  try {
+    const res = await fetch('https://gen.pollinations.ai/account/balance', {
+      headers: { 'Authorization': `Bearer ${apiKey}` }
+    });
+    if (!res.ok) throw new Error('Invalid key or network error');
+    const data = await res.json();
+    
+    let text = [];
+    if (data.balance !== undefined) {
+      text.push(`Balance: ${Number(data.balance).toFixed(2)}`);
+    } else {
+      if (data.tierBalance > 0) text.push(`Free: ${data.tierBalance.toFixed(2)}`);
+      const paid = (data.cryptoBalance || 0) + (data.packBalance || 0);
+      if (paid > 0) text.push(`Paid: ${paid.toFixed(2)}`);
+    }
+    
+    if (text.length === 0 || (data.balance !== undefined && data.balance <= 0)) {
+      display.style.color = '#ef4444';
+      display.textContent = 'Balance empty. Please top up.';
+    } else {
+      display.style.color = 'var(--accent)';
+      display.textContent = text.join(' | ');
+      // Immediately save the API key and re-render dynamic models
+      C.state.settings.apiKey = apiKey;
+      C.saveState();
+      renderDynamicModels();
+    }
+  } catch (e) {
+    display.style.color = '#ef4444';
+    display.textContent = 'Error: ' + e.message;
+  }
+});
+
 $('toggleTavilyKey')?.addEventListener('click', () => {
   const inp = $('tavilyKeyInput');
   const show = inp.type === 'password';
@@ -178,14 +263,20 @@ $('saveSettingsBtn').addEventListener('click', () => {
   }
   C.state.settings.textModel  = document.querySelector('#textModelChips .model-chip.active')?.dataset.model  || 'openai';
   C.state.settings.imageModel = document.querySelector('#imageModelChips .model-chip.active')?.dataset.model || 'flux';
+  C.state.settings.videoModel = document.querySelector('#videoModelChips .model-chip.active')?.dataset.model || 'ltx-2';
   C.state.settings.ttsMode    = ttsMode;
   C.state.settings.ttsVoice   = $('ttsVoiceSelect').value;
   C.state.settings.sttLang    = $('sttLangSelect').value;
   C.state.settings.apiKey     = apiKey;
   C.state.settings.tavilyKey  = $('tavilyKeyInput').value.trim();
   C.saveState();
+  
+  if (activeChatObj) { 
+    activeChatObj.model = C.state.settings.textModel; 
+    C.saveChat(activeChatObj); 
+  }
+  
   updateHeaderUI();
-  if (activeChatObj) { activeChatObj.model = C.state.settings.textModel; C.saveChat(activeChatObj); }
   closeSettings();
   toast('Settings saved', 'success');
 });
@@ -209,29 +300,129 @@ $('testVoiceBtn')?.addEventListener('click', async () => {
 });
 
 // ── Model Switcher (mid-chat) ──────────
-const MODEL_LABELS = {
-  openai:'GPT-4o', mistral:'Mistral', llama:'Llama', searchgpt:'SearchGPT',
-  gemini:'Gemini', 'claude-hybridspace':'Claude', deepseek:'DeepSeek', 'qwen-coder':'Qwen Coder'
-};
 modelSwitcherBtn.addEventListener('click', e => {
   e.stopPropagation();
   const vis = modelDropdown.style.display === 'block';
   modelDropdown.style.display = vis ? 'none' : 'block';
 });
 document.addEventListener('click', () => { modelDropdown.style.display = 'none'; });
-document.querySelectorAll('.model-dd-item').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const model = btn.dataset.model;
-    C.state.settings.textModel = model;
-    if (activeChatObj) { activeChatObj.model = model; C.saveChat(activeChatObj); }
-    updateHeaderUI();
-    toast(`Switched to ${MODEL_LABELS[model] || model}`, 'success');
-  });
-});
+
+function getModelLabel(modelId) {
+  const m = C.state.textModels.find(x => x.name === modelId);
+  return m ? m.name : modelId;
+}
 
 function updateHeaderUI() {
   const model = (activeChatObj?.model) || C.state.settings.textModel;
-  currentModelLabel.textContent = MODEL_LABELS[model] || 'GPT-4o';
+  currentModelLabel.textContent = getModelLabel(model) || 'GPT-4o';
+}
+
+function renderDynamicModels() {
+  const textContainer = $('textModelChips');
+  const imgContainer = $('imageModelChips');
+  const vidContainer = $('videoModelChips');
+  const dropdown = $('modelDropdown');
+  const hasKey = C.state.settings.apiKey?.trim().length > 4;
+
+  if (textContainer) textContainer.innerHTML = '';
+  if (imgContainer) imgContainer.innerHTML = '';
+  if (vidContainer) vidContainer.innerHTML = '';
+  if (dropdown) dropdown.innerHTML = '';
+
+  C.state.textModels.forEach(m => {
+    const isFree = m.name === 'openai' || m.name === 'openai-fast';
+    const requiresKey = !isFree;
+
+    // Dropdown
+    const ddBtn = document.createElement('button');
+    ddBtn.className = 'model-dd-item';
+    ddBtn.dataset.model = m.name;
+    ddBtn.textContent = m.name + (isFree ? ' (Free)' : '');
+    if (requiresKey && !hasKey) ddBtn.style.color = '#ff4444';
+    
+    ddBtn.addEventListener('click', () => {
+      if (requiresKey && !hasKey) {
+        toast('Please provide an API key in Settings to use this model.', 'error');
+        return;
+      }
+      C.state.settings.textModel = m.name;
+      if (activeChatObj) { activeChatObj.model = m.name; C.saveChat(activeChatObj); }
+      updateHeaderUI();
+      // keep settings in sync
+      document.querySelectorAll('#textModelChips .model-chip').forEach(x => x.classList.toggle('active', x.dataset.model === m.name));
+      toast(`Switched to ${m.name}`, 'success');
+      modelDropdown.style.display = 'none';
+    });
+    if (dropdown) dropdown.appendChild(ddBtn);
+
+    // Settings Chip
+    const chip = document.createElement('button');
+    chip.className = 'model-chip' + (C.state.settings.textModel === m.name ? ' active' : '');
+    chip.dataset.model = m.name;
+    chip.innerHTML = m.name + (isFree ? ' <span style="font-size:0.7em;color:var(--accent)">Free</span>' : '');
+    if (requiresKey && !hasKey) chip.style.border = '1px solid #ff4444';
+    
+    chip.addEventListener('click', () => {
+      if (requiresKey && !hasKey) {
+        toast('Please provide an API key in Settings to use this model.', 'error');
+        return;
+      }
+      document.querySelectorAll('#textModelChips .model-chip').forEach(x => x.classList.remove('active'));
+      chip.classList.add('active');
+      C.state.settings.textModel = m.name;
+    });
+    if (textContainer) textContainer.appendChild(chip);
+  });
+
+  // Sort image models so 'flux' is always at the top
+  const sortedImageModels = [...C.state.imageModels].sort((a, b) => {
+    if (a.name === 'flux') return -1;
+    if (b.name === 'flux') return 1;
+    return 0;
+  });
+
+  sortedImageModels.forEach(m => {
+    const isFree = m.name === 'flux';
+    const requiresKey = !isFree;
+
+    const chip = document.createElement('button');
+    chip.className = 'model-chip' + (C.state.settings.imageModel === m.name ? ' active' : '');
+    chip.dataset.model = m.name;
+    chip.innerHTML = m.name + (isFree ? ' <span style="font-size:0.7em;color:var(--accent)">Free</span>' : '');
+    if (requiresKey && !hasKey) chip.style.border = '1px solid #ff4444';
+    
+    chip.addEventListener('click', () => {
+      if (requiresKey && !hasKey) {
+        toast('Please provide an API key in Settings to use this model.', 'error');
+        return;
+      }
+      document.querySelectorAll('#imageModelChips .model-chip').forEach(x => x.classList.remove('active'));
+      chip.classList.add('active');
+      C.state.settings.imageModel = m.name;
+    });
+    if (imgContainer) imgContainer.appendChild(chip);
+  });
+
+  C.state.videoModels.forEach(m => {
+    const requiresKey = true; // All video models require key
+
+    const chip = document.createElement('button');
+    chip.className = 'model-chip' + (C.state.settings.videoModel === m.name ? ' active' : '');
+    chip.dataset.model = m.name;
+    chip.textContent = m.name;
+    if (requiresKey && !hasKey) chip.style.border = '1px solid #ff4444';
+    
+    chip.addEventListener('click', () => {
+      if (requiresKey && !hasKey) {
+        toast('Please provide an API key in Settings to use this model.', 'error');
+        return;
+      }
+      document.querySelectorAll('#videoModelChips .model-chip').forEach(x => x.classList.remove('active'));
+      chip.classList.add('active');
+      C.state.settings.videoModel = m.name;
+    });
+    if (vidContainer) vidContainer.appendChild(chip);
+  });
 }
 
 // ── Header dropdown ────────────────────
@@ -252,6 +443,7 @@ $('clearChatBtn').addEventListener('click', () => {
   activeChatObj.messages = [];
   C.saveChat(activeChatObj);
   showWelcome();
+  renderChatHistory();
   toast('Messages cleared');
 });
 $('exportChatBtn').addEventListener('click', () => {
@@ -308,8 +500,9 @@ $('copyLinkBtn').addEventListener('click', () => {
 });
 
 // ── File Attachment ─────────────────────
-let attachedFileContent = null; // holds file text when attached
+let attachedFileContent = null;
 let attachedFileName    = null;
+let attachedFileType    = null;
 
 const attachBtn      = $('attachBtn');
 const fileInput      = $('fileInput');
@@ -320,6 +513,7 @@ const removeAttach   = $('removeAttachBtn');
 function clearAttachment() {
   attachedFileContent = null;
   attachedFileName    = null;
+  attachedFileType    = null;
   attachPreview.style.display = 'none';
   fileInput.value = '';
   attachBtn.classList.remove('active');
@@ -330,19 +524,37 @@ attachBtn.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   const file = fileInput.files[0];
   if (!file) return;
-  // Size guard — max 500 KB for text files
-  if (file.size > 512000) { toast('File too large (max 500 KB)', 'error'); return; }
-  const reader = new FileReader();
-  reader.onload = e => {
-    attachedFileContent = e.target.result;
-    attachedFileName    = file.name;
-    attachFileName.textContent = file.name;
-    attachPreview.style.display = 'block';
-    attachBtn.classList.add('active');
-    toast(`Attached: ${file.name}`, 'success');
-  };
-  reader.onerror = () => toast('Could not read file', 'error');
-  reader.readAsText(file);
+  const isImage = file.type.startsWith('image/');
+  
+  if (isImage) {
+    if (file.size > 4 * 1024 * 1024) { toast('Image too large (max 4MB)', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      attachedFileContent = e.target.result;
+      attachedFileName = file.name;
+      attachedFileType = 'image';
+      attachFileName.textContent = file.name;
+      attachPreview.style.display = 'block';
+      attachBtn.classList.add('active');
+      toast(`Attached image: ${file.name}`, 'success');
+    };
+    reader.onerror = () => toast('Could not read image', 'error');
+    reader.readAsDataURL(file);
+  } else {
+    if (file.size > 512000) { toast('File too large (max 500 KB)', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      attachedFileContent = e.target.result;
+      attachedFileName    = file.name;
+      attachedFileType    = 'text';
+      attachFileName.textContent = file.name;
+      attachPreview.style.display = 'block';
+      attachBtn.classList.add('active');
+      toast(`Attached: ${file.name}`, 'success');
+    };
+    reader.onerror = () => toast('Could not read file', 'error');
+    reader.readAsText(file);
+  }
 });
 
 removeAttach.addEventListener('click', () => { clearAttachment(); toast('Attachment removed'); });
@@ -564,34 +776,41 @@ function appendBubble(role, content, timestamp, msgId) {
 // ── Parse content ──────────────────────
 function parseMessageContent(content) {
   const imageMatches = [...content.matchAll(/IMAGE:\s*(.+)/gi)];
-  let text = content.replace(/IMAGE:\s*.+/gi, '').trim();
+  const videoMatches = [...content.matchAll(/VIDEO:\s*(.+)/gi)];
+  let text = content.replace(/IMAGE:\s*.+/gi, '').replace(/VIDEO:\s*.+/gi, '').trim();
   let html = '';
   if (text) {
     html = marked.parse(text, { breaks: true })
       .replace(/<pre><code class="(language-\w+)">([\s\S]*?)<\/code><\/pre>/g, (_, cls, code) => {
         const lang = cls.replace('language-', '');
-        return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang}</span><button class="copy-code-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button></div><pre><code class="${cls}">${code}</code></pre></div>`;
+        return `<div class="code-artifact" onclick="openCodeModal(this.dataset.code, '${lang}')" data-code="${encodeURIComponent(code)}"><div class="code-artifact-left"><div class="code-artifact-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="code-artifact-info"><div class="code-artifact-title">Code Snippet</div><div class="code-artifact-lang">${lang}</div></div></div><div class="code-artifact-right">View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></div>`;
       })
       .replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (_, code) =>
-        `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">code</span><button class="copy-code-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button></div><pre><code>${code}</code></pre></div>`);
+        `<div class="code-artifact" onclick="openCodeModal(this.dataset.code, 'text')" data-code="${encodeURIComponent(code)}"><div class="code-artifact-left"><div class="code-artifact-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div><div class="code-artifact-info"><div class="code-artifact-title">Code Snippet</div><div class="code-artifact-lang">TEXT</div></div></div><div class="code-artifact-right">View <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></div></div>`);
   }
   imageMatches.forEach(m => {
     const prompt = m[1].trim();
     const url = C.buildImageUrl(prompt, C.state.settings.imageModel);
-    html += `<div class="img-bubble"><img src="${url}" alt="${prompt}" loading="lazy" onerror="this.parentElement.innerHTML='<p style=padding:10px>⚠️ Image failed to load</p>'"/><div class="img-bubble-caption">🎨 ${prompt.slice(0,80)}</div></div>`;
+    html += `<div class="img-bubble"><img src="${url}" alt="${prompt}" loading="lazy" onerror="this.parentElement.innerHTML='<p style=padding:10px>⚠️ Image failed to load</p>'"/><div class="img-bubble-caption"><span>🎨 ${prompt.slice(0,60)}</span><button class="media-download-btn" onclick="window.open('${url}', '_blank')" title="Open Image"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div></div>`;
+  });
+  videoMatches.forEach(m => {
+    const prompt = m[1].trim();
+    const url = C.buildVideoUrl(prompt, C.state.settings.videoModel);
+    html += `<div class="img-bubble"><video src="${url}" controls preload="metadata" style="max-width:100%;border-radius:var(--r);"></video><div class="img-bubble-caption"><span>🎬 ${prompt.slice(0,60)}</span><button class="media-download-btn" onclick="window.open('${url}', '_blank')" title="Open Video"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button></div></div>`;
   });
   return html || `<p>${content}</p>`;
 }
 
 // ── Append user/AI message ─────────────────
 // displayText = what shows in bubble, fullText = what goes into chat history/AI context
-function appendUserMessage(displayText, fullText) {
+function appendUserMessage(displayText, fullText, imageBase64) {
   if (!activeChatObj) return;
   const content = fullText || displayText;
   const msg = { id: C.uid(), role: 'user', content, displayContent: displayText, timestamp: C.now() };
+  if (imageBase64) msg.image = imageBase64;
   activeChatObj.messages.push(msg);
   if (activeChatObj.messages.filter(m => m.role === 'user').length === 1) {
-    activeChatObj.title = displayText.slice(0, 42) + (displayText.length > 42 ? '…' : '');
+    activeChatObj.title = (content.replace(/<[^>]+>/g, '')).slice(0, 42) + (content.length > 42 ? '…' : '');
     chatTitle.textContent = activeChatObj.title;
     renderChatHistory();
   }
@@ -619,42 +838,66 @@ async function handleSend(text) {
   // Bundle attached file content into message if present
   let fullText = text;
   let displayText = text;
+  let imageBase64 = null;
+
   if (attachedFileContent) {
     const fname = attachedFileName;
-    const ext   = fname.split('.').pop().toLowerCase();
-    const lang  = { js:'javascript', ts:'typescript', py:'python', html:'html', css:'css',
-                    json:'json', md:'markdown', sh:'bash', java:'java', c:'c', cpp:'cpp',
-                    kt:'kotlin', rs:'rust', swift:'swift' }[ext] || '';
-    fullText = `${text}\n\n---\n**Attached file: ${fname}**\n\`\`\`${lang}\n${attachedFileContent.slice(0, 20000)}\n\`\`\``;
-    displayText = `${text} \ud83d\udcce *${fname}*`;
+    if (attachedFileType === 'text') {
+      const ext   = fname.split('.').pop().toLowerCase();
+      const lang  = { js:'javascript', ts:'typescript', py:'python', html:'html', css:'css',
+                      json:'json', md:'markdown', sh:'bash', java:'java', c:'c', cpp:'cpp',
+                      kt:'kotlin', rs:'rust', swift:'swift' }[ext] || '';
+      fullText = `${text}\n\n---\n**Attached file: ${fname}**\n\`\`\`${lang}\n${attachedFileContent.slice(0, 20000)}\n\`\`\``;
+      displayText = text ? `${text} \ud83d\udcce *${fname}*` : `\ud83d\udcce *${fname}*`;
+    } else if (attachedFileType === 'image') {
+      imageBase64 = attachedFileContent;
+      displayText = text ? `${text} \n<br><img src="${imageBase64}" style="max-width:200px;border-radius:8px;margin-top:8px">` : `<img src="${imageBase64}" style="max-width:200px;border-radius:8px;margin-top:8px">`;
+    }
     clearAttachment();
   }
 
-  if (isCoolingDown) {
+  if (isCoolingDown && (!C.state.settings.apiKey || C.state.settings.apiKey.trim().length <= 4)) {
     const row = appendBubble('user', displayText, C.now(), C.uid());
     const badge = document.createElement('div');
     badge.className = 'pending-badge';
     badge.id = 'pb-' + Date.now();
     badge.textContent = 'Queued — sends when cooldown ends';
     row.querySelector('.message-bubble').appendChild(badge);
-    pendingQueue.push({ text: fullText, displayText, badgeId: badge.id });
+    pendingQueue.push({ text: fullText, displayText, badgeId: badge.id, image: imageBase64 });
     return;
   }
-  appendUserMessage(displayText, fullText);
-  await doAIRequest(fullText);
+
+  appendUserMessage(displayText, fullText, imageBase64);
+  await doAIRequest(fullText, false, false, imageBase64);
 }
 
-async function doAIRequest(text, isRetry = false) {
-  C.state.isGenerating = true;
-  sendBtn.disabled = true;
-  typingIndicator.style.display = 'flex';
-  setCoreActive(true);
-  if (!isRetry) scrollBottom();
-
-  if (!isRetry) C.extractAndUpdateUserProfile(activeChatObj, text).catch(() => {});
+async function doAIRequest(text, isRetry = false, isAgenticLoop = false, imageBase64 = null) {
+  if (!isAgenticLoop) {
+    C.state.isGenerating = true;
+    sendBtn.disabled = true;
+    typingIndicator.style.display = 'flex';
+    setCoreActive(true);
+    if (!isRetry) scrollBottom();
+    if (!isRetry) C.extractAndUpdateUserProfile(activeChatObj, text).catch(() => {});
+  }
 
   try {
     activeChatObj = await C.maybeCompressMemory(activeChatObj);
+
+    // ── Vision Check ──
+    const hasImageInRequest = activeChatObj.messages.some(m => m.image);
+    if (hasImageInRequest) {
+       const mData = C.state.textModels.find(x => x.name === C.state.settings.textModel);
+       const canVision = mData && mData.input_modalities && mData.input_modalities.includes('image');
+       if (!canVision) {
+           typingIndicator.style.display = 'none';
+           setCoreActive(false);
+           C.state.isGenerating = false;
+           appendAIMessage("⚠️ Error: The currently selected model does not support image analysis. Please choose a vision-capable model (like GPT-4o, Gemini, Claude, etc.) and try again.");
+           if (!C.state.settings.apiKey?.trim() || C.state.settings.apiKey.trim().length <= 4) doStartCooldown();
+           return;
+       }
+    }
 
     // ── Image intent ──
     if (C.detectImageIntent(text)) {
@@ -667,7 +910,22 @@ async function doAIRequest(text, isRetry = false) {
       setCoreActive(false);
       C.state.isGenerating = false;
       appendAIMessage(`Sure! Generating your image now.\n\nIMAGE: ${imagePrompt}`);
-      doStartCooldown();
+      if (!C.state.settings.apiKey?.trim() || C.state.settings.apiKey.trim().length <= 4) doStartCooldown();
+      return;
+    }
+
+    // ── Video intent ──
+    if (C.detectVideoIntent(text)) {
+      let videoPrompt = text
+        .replace(/^(please\s+)?(generate|create|make|render)\s+(me\s+)?(a\s+)?(video|animation|clip)?\s*(of\s+)?/i, '')
+        .replace(/\s*(video|vid|animation|banao|bana do|kar do|karo)\s*$/i, '')
+        .trim();
+      if (!videoPrompt || videoPrompt.length < 3) videoPrompt = text;
+      typingIndicator.style.display = 'none';
+      setCoreActive(false);
+      C.state.isGenerating = false;
+      appendAIMessage(`Sure! Generating your video now.\n\nVIDEO: ${videoPrompt}`);
+      if (!C.state.settings.apiKey?.trim() || C.state.settings.apiKey.trim().length <= 4) doStartCooldown();
       return;
     }
 
@@ -695,23 +953,52 @@ async function doAIRequest(text, isRetry = false) {
     }));
     const baseContext = C.buildContext(activeChatObj);
     const reply = await C.callTextAPI(history, C.state.settings.textModel, baseContext + extraContext);
+    
+    // ── Agentic VFS Actions Check ──
+    const agentActions = C.processAgenticResponse(reply);
+    
+    if (agentActions.length > 0) {
+      appendAIMessage(reply); // show the AI's action
+      
+      const sysMsg = agentActions.join('\n\n');
+      appendUserMessage("*(System generated feedback...)*", sysMsg);
+      
+      const isFree = C.state.settings.textModel === 'openai' || C.state.settings.textModel === 'openai-fast';
+      const hasKey = C.state.settings.apiKey?.trim().length > 4;
+      
+      if (isFree && !hasKey) {
+         typingIndicator.style.display = 'flex';
+         const tt = typingIndicator.querySelector('.typing-text');
+         if (tt) tt.textContent = 'Agent is testing code (waiting for cooldown)...';
+         setCoreActive(true);
+         
+         doStartCooldown(() => {
+             const tt2 = typingIndicator.querySelector('.typing-text');
+             if (tt2) tt2.textContent = '';
+             doAIRequest(sysMsg, false, true);
+         });
+      } else {
+         typingIndicator.style.display = 'flex';
+         const tt = typingIndicator.querySelector('.typing-text');
+         if (tt) tt.textContent = 'Agent is executing code...';
+         setCoreActive(true);
+         doAIRequest(sysMsg, false, true);
+      }
+      return;
+    }
+
+    // ── Normal Completion ──
     typingIndicator.style.display = 'none';
+    const tt = typingIndicator.querySelector('.typing-text');
+    if (tt) tt.textContent = '';
     setCoreActive(false);
     C.state.isGenerating = false;
     appendAIMessage(reply);
-    doStartCooldown(); // ✅ cooldown only on success
+    if (!C.state.settings.apiKey?.trim() || C.state.settings.apiKey.trim().length <= 4) doStartCooldown();
 
   } catch (err) {
     console.warn('[Ciel] API attempt failed:', err);
 
-    if (!isRetry) {
-      // ── First failure: silently retry after 3s, keep spinner ──
-      // Do NOT start cooldown yet — stay locked, keep typing indicator
-      setTimeout(() => doAIRequest(text, true), 3000);
-      return; // cooldown NOT called here
-    }
-
-    // ── Second failure: show gentle error + retry button ──
     typingIndicator.style.display = 'none';
     setCoreActive(false);
     C.state.isGenerating = false;
@@ -725,7 +1012,7 @@ async function doAIRequest(text, isRetry = false) {
     row.dataset.msgId = msgId;
     row.innerHTML = `<div class="msg-avatar"></div><div><div class="message-bubble" style="display:flex;align-items:center;gap:10px;color:var(--dim);font-size:.88rem;">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      Something went wrong.
+      ${err.message || 'Something went wrong.'}
       <button class="msg-action-btn" id="retryBtn_${msgId}" style="color:var(--accent);font-weight:700">Try again</button>
     </div></div>`;
     messagesContainer.appendChild(row);
@@ -738,12 +1025,12 @@ async function doAIRequest(text, isRetry = false) {
       doAIRequest(text);
     });
 
-    doStartCooldown(); // ✅ cooldown only after final failure
+    if (!C.state.settings.apiKey?.trim() || C.state.settings.apiKey.trim().length <= 4) doStartCooldown();
   }
 }
 
 
-function doStartCooldown() {
+function doStartCooldown(overrideCallback) {
   if (C.state.cooldownTimer) return;
   isCoolingDown = true;
   queueBanner.style.display = 'block';
@@ -754,10 +1041,16 @@ function doStartCooldown() {
       isCoolingDown = false;
       queueBanner.style.display = 'none';
       sendBtn.disabled = chatInput.value.trim() === '';
+      
+      if (overrideCallback) {
+        overrideCallback();
+        return;
+      }
+      
       if (pendingQueue.length > 0) {
         const next = pendingQueue.shift();
         document.getElementById(next.badgeId)?.remove();
-        appendUserMessage(next.text);
+        appendUserMessage(next.displayText, next.text);
         await doAIRequest(next.text);
       }
     }
@@ -795,9 +1088,51 @@ micBtn.addEventListener('click', () => {
   recognition.start();
 });
 
+// ── Code Modal ─────────────────────────
+const codeModalOverlay = $('codeModalOverlay');
+const codeModalContent = $('codeModalContent');
+const codeModalLang = $('codeModalLang');
+let currentCodeToCopy = '';
+
+window.openCodeModal = function(encodedCode, lang) {
+  const code = decodeURIComponent(encodedCode);
+  currentCodeToCopy = code;
+  codeModalLang.textContent = lang || 'text';
+  
+  // Reset classes and set new language class
+  codeModalContent.className = 'hljs'; 
+  if (lang) codeModalContent.classList.add('language-' + lang);
+  
+  // Set text and highlight
+  codeModalContent.textContent = code;
+  hljs.highlightElement(codeModalContent);
+  
+  codeModalOverlay.classList.add('show');
+}
+
+$('closeCodeModalBtn')?.addEventListener('click', () => {
+  codeModalOverlay.classList.remove('show');
+});
+
+codeModalOverlay?.addEventListener('click', e => {
+  if (e.target === codeModalOverlay) codeModalOverlay.classList.remove('show');
+});
+
+$('copyCodeModalBtn')?.addEventListener('click', () => {
+  copyToClipboard(currentCodeToCopy, () => {
+    const btn = $('copyCodeModalBtn');
+    const old = btn.innerHTML;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg> Copied';
+    setTimeout(() => { btn.innerHTML = old; }, 2000);
+    toast('Code copied!', 'success');
+  });
+});
+
 // ── Boot ── always show welcome home screen on fresh open
-function boot() {
+async function boot() {
   C.loadState();
+  await C.fetchModels();
+  renderDynamicModels();
   applyTheme(localStorage.getItem('cielai_theme') || 'light');
   updateHeaderUI();
 

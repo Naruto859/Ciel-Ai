@@ -23,8 +23,19 @@ You are Ciel, a hyper-intelligent, efficient, and devoted AI assistant.
 3. Efficiency: Provide concise, high-value answers.
 4. Use clear markdown formatting.
 5. For image generation requests: output "IMAGE: {vivid prompt}" on its own line.
-6. Do NOT mention your underlying model name (e.g. GPT-4) unless specifically asked.
-7. You have a **Web Search tool**. When the user asks for real-time info, current events, latest news, today's prices, live scores, or anything that requires up-to-date data — the system will automatically inject fresh web search results into the context before your reply. Use that data to answer accurately and cite sources with markdown links.
+6. For video generation requests: output "VIDEO: {vivid prompt}" on its own line.
+7. Do NOT mention your underlying model name (e.g. GPT-4) unless specifically asked.
+8. You have a **Web Search tool**. When the user asks for real-time info, current events, latest news, today's prices, live scores, or anything that requires up-to-date data — the system will automatically inject fresh web search results into the context before your reply. Use that data to answer accurately and cite sources with markdown links.
+9. **Agentic Code Workspace:** You have a Virtual File System (VFS).
+   - To save code to a file:
+     <write_file name="script.js">
+     console.log("Hello");
+     </write_file>
+   - To read a file:
+     <read_file name="script.js"></read_file>
+   - To execute a JS file and see output:
+     <run_code name="script.js"></run_code>
+   Whenever you use these tags, the system will process them automatically and feed the result back to you immediately. You can use this loop to iteratively write, run, and fix code.
 `;
 
 const MEMORY_COMPRESS_PROMPT = `
@@ -87,13 +98,18 @@ const ALL_PROMPTS = [
 // ── State ──────────────────────────────────
 let state = {
   activeChatId: null,
+  textModels: [],
+  imageModels: [],
+  videoModels: [],
+  vfs: {}, // Virtual File System for agent
   settings: {
     textModel:  'openai',
     imageModel: 'flux',
+    videoModel: 'ltx-2',
     ttsMode:    'browser',
     ttsVoice:   'nova',
     sttLang:    'en-US',
-    apiKey:     '',   // Pollinations TTS key
+    apiKey:     '',   // Pollinations API key
     tavilyKey:  '',   // Tavily web search key
   },
   isGenerating: false,
@@ -104,6 +120,21 @@ let state = {
   isRecording: false,
   currentAudio: null,
 };
+
+async function fetchModels() {
+  try {
+    const [t, i] = await Promise.all([
+      fetch('https://gen.pollinations.ai/text/models').then(r => r.json()),
+      fetch('https://gen.pollinations.ai/image/models').then(r => r.json())
+    ]);
+    state.textModels = Array.isArray(t) ? t : [];
+    const allMedia = Array.isArray(i) ? i : [];
+    state.imageModels = allMedia.filter(m => !m.output_modalities || m.output_modalities.includes('image'));
+    state.videoModels = allMedia.filter(m => m.output_modalities && m.output_modalities.includes('video'));
+  } catch (e) {
+    console.warn('Failed to fetch models', e);
+  }
+}
 
 // ── Helpers ────────────────────────────────
 function uid() {
@@ -143,6 +174,10 @@ function getChat(id) {
   return getAllChats()[id] || null;
 }
 function saveChat(chat) {
+  if (!chat.messages || chat.messages.length === 0) {
+    deleteChat(chat.id);
+    return;
+  }
   const chats = getAllChats();
   chats[chat.id] = chat;
   saveAllChats(chats);
@@ -166,7 +201,6 @@ function createChat() {
     userMd: USER_MD_BOOTSTRAP.replace('{{DATE}}', d),
     model: state.settings.textModel,
   };
-  saveChat(chat);
   return chat;
 }
 
@@ -213,19 +247,80 @@ async function maybeCompressMemory(chat) {
 
 // ── Pollinations API ───────────────────────
 async function callTextAPI(messages, model, system) {
-  const body = { messages, model: model || 'openai', system: system || SYSTEM_MD };
-  const res = await fetch(POLLINATIONS_TEXT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+  const apiKey = state.settings.apiKey?.trim();
+  const isPremium = apiKey && apiKey.length > 4;
+
+  const formattedMessages = messages.map(m => {
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content },
+          { type: "image_url", image_url: { url: m.image } }
+        ]
+      };
+    }
+    return { role: m.role, content: m.content };
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return await res.text();
+
+  const endpoint = isPremium ? 'https://gen.pollinations.ai/v1/chat/completions' : POLLINATIONS_TEXT;
+  const body = isPremium ? {
+    model: model || 'openai',
+    messages: [{ role: 'system', content: system || SYSTEM_MD }, ...formattedMessages]
+  } : {
+    model: model || 'openai',
+    system: system || SYSTEM_MD,
+    messages: formattedMessages
+  };
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (isPremium) headers['Authorization'] = `Bearer ${apiKey}`;
+
+  let attempt = 0;
+  const delays = [2000, 4000, 8000];
+  
+  while (attempt <= 3) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      
+      if (res.status === 401) throw new Error('API key is required or invalid.');
+      if (res.status === 402) throw new Error('Insufficient Pollinations API balance.');
+      if (!res.ok) {
+        if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+          throw new Error(`Retryable error ${res.status}`);
+        }
+        throw new Error(`API error ${res.status}`);
+      }
+      
+      if (isPremium) {
+        const json = await res.json();
+        return json.choices[0].message.content;
+      } else {
+        return await res.text();
+      }
+    } catch (err) {
+      if (err.message.includes('API key') || err.message.includes('balance') || err.message.includes('API error') || attempt === 3) {
+        throw err;
+      }
+      console.log(`[Ciel] Retrying API call in ${delays[attempt]}ms...`);
+      await new Promise(r => setTimeout(r, delays[attempt]));
+      attempt++;
+    }
+  }
 }
 
 function buildImageUrl(prompt, model, w, h) {
   const enc = encodeURIComponent(prompt);
-  return `${POLLINATIONS_IMAGE}${enc}?model=${model || 'flux'}&width=${w || 768}&height=${h || 512}&nologo=true&enhance=true`;
+  const apiKey = state.settings.apiKey?.trim();
+  let url = `${POLLINATIONS_IMAGE}${enc}?model=${model || 'flux'}&width=${w || 768}&height=${h || 512}&nologo=true&enhance=true`;
+  if (apiKey) {
+    url += `&key=${apiKey}`;
+  }
+  return url;
 }
 
 async function callPollinationsAudio(text, voice, apiKey) {
@@ -243,12 +338,16 @@ async function callPollinationsAudio(text, voice, apiKey) {
 // ── TTS ────────────────────────────────────
 function stripForTTS(text) {
   return text
-    .replace(/```[\s\S]*?```/g, ' code block ')
+    .replace(/<write_file[\s\S]*?<\/write_file>/g, '')
+    .replace(/<read_file[\s\S]*?<\/read_file>/g, '')
+    .replace(/<run_code[\s\S]*?<\/run_code>/g, '')
+    .replace(/```[\s\S]*?```/g, '')
     .replace(/`[^`]+`/g, '')
     .replace(/#{1,6}\s/g, '')
     .replace(/[*_~|>\[\]()]/g, '')
-    .replace(/https?:\/\/\S+/g, 'link')
-    .replace(/IMAGE:.*/gi, 'image generated')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/IMAGE:.*/gi, '')
+    .replace(/VIDEO:.*/gi, '')
     .replace(/\n+/g, ' ')
     .trim();
 }
@@ -373,6 +472,14 @@ async function extractAndUpdateUserProfile(chat, userMessage) {
   } catch {}
 }
 
+function buildVideoUrl(prompt, model) {
+  const enc = encodeURIComponent(prompt);
+  const apiKey = state.settings.apiKey?.trim();
+  let url = `https://gen.pollinations.ai/video/${enc}?model=${model || 'ltx-2'}`;
+  if (apiKey) url += `&key=${apiKey}`;
+  return url;
+}
+
 // ── Web Search Intent Detection ─────────────
 function detectWebSearchIntent(text) {
   const t = text.toLowerCase();
@@ -386,6 +493,53 @@ function detectWebSearchIntent(text) {
     /\b(search kar|web search|internet mein|dhundho|khojo)\b/i,
   ];
   return patterns.some(p => p.test(t));
+}
+
+// ── Agentic Tools ───────────────────────────
+function processAgenticResponse(reply) {
+  let actions = [];
+  const writeRegex = /<write_file\s+name="([^"]+)">([\s\S]*?)<\/write_file>/g;
+  let wMatch;
+  while ((wMatch = writeRegex.exec(reply)) !== null) {
+      state.vfs[wMatch[1]] = wMatch[2].trim();
+      actions.push(`[System: Saved ${wMatch[1]} to VFS]`);
+  }
+
+  const readRegex = /<read_file\s+name="([^"]+)"><\/read_file>/g;
+  let rMatch;
+  while ((rMatch = readRegex.exec(reply)) !== null) {
+      const content = state.vfs[rMatch[1]] || "Error: File not found.";
+      actions.push(`[System: Content of ${rMatch[1]}]\n\`\`\`\n${content}\n\`\`\``);
+  }
+
+  const runRegex = /<run_code\s+name="([^"]+)"><\/run_code>/g;
+  let runMatch;
+  while ((runMatch = runRegex.exec(reply)) !== null) {
+      const filename = runMatch[1];
+      const code = state.vfs[filename];
+      if (!code) {
+          actions.push(`[System: Cannot run ${filename}: File not found]`);
+          continue;
+      }
+      if (filename.endsWith('.js')) {
+          let output = '';
+          try {
+              let logs = [];
+              const originalLog = console.log;
+              console.log = (...args) => logs.push(args.join(' '));
+              // Execute code safely
+              const result = new Function(code)();
+              console.log = originalLog;
+              output = logs.join('\n') + (result !== undefined ? '\nReturn: ' + result : '');
+          } catch(e) {
+              output = 'Error: ' + e.message;
+          }
+          actions.push(`[System: Execution Result of ${filename}]\n\`\`\`\n${output}\n\`\`\``);
+      } else {
+          actions.push(`[System: Cannot run ${filename}. Only .js files are executable.]`);
+      }
+  }
+  return actions;
 }
 
 // ── Tavily Web Search ────────────────────────
@@ -440,11 +594,22 @@ function extractImagePrompt(text) {
   return match ? match[1].trim() : null;
 }
 
+function detectVideoIntent(text) {
+  const t = text.toLowerCase();
+  const hindiVid = /video\s*banao|vid\s*banao|video.*bana|video.*karo/i;
+  const engVid = /\b(generate|create|make|render)\b[^.]{0,60}\b(video|animation|clip)\b/i;
+  if (hindiVid.test(t)) return true;
+  if (engVid.test(t)) return true;
+  if (/\b(a|an|the)\s+(video|animation|clip)\s+of\b/i.test(t)) return true;
+  return false;
+}
+
 // ─────────────────────────────────────────────
 //  Export to window for Part 2
 // ─────────────────────────────────────────────
 window.CielAI = {
   state, uid, now, timeStr, greet,
+  fetchModels,
   saveState, loadState,
   getAllChats, getChat, saveChat, deleteChat, createChat,
   buildContext, maybeCompressMemory,
@@ -454,6 +619,7 @@ window.CielAI = {
   startCooldown,
   getChatIdFromURL, setChatIdInURL, buildShareURL, loadFromShareHash,
   detectImageIntent, detectWebSearchIntent, callTavilySearch, extractImagePrompt,
-  extractAndUpdateUserProfile,
+  detectVideoIntent, buildVideoUrl,
+  extractAndUpdateUserProfile, processAgenticResponse,
   ALL_PROMPTS, SYSTEM_MD, COOLDOWN_MS,
 };
