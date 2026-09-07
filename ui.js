@@ -887,7 +887,7 @@ async function doAIRequest(text, isRetry = false, isAgenticLoop = false, imageBa
     // ── Vision Check ──
     const hasImageInRequest = activeChatObj.messages.some(m => m.image);
     if (hasImageInRequest) {
-       const mData = C.state.textModels.find(x => x.name === C.state.settings.textModel);
+       const mData = C.state.textModels.find(x => x.name === C.state.settings.textModel || x.aliases?.includes(C.state.settings.textModel));
        const canVision = mData && mData.input_modalities && mData.input_modalities.includes('image');
        if (!canVision) {
            typingIndicator.style.display = 'none';
